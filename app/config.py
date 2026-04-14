@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     max_chunk_size: int = 4000
     chunk_overlap: int = 200
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class LLMSettings(BaseSettings):
@@ -20,7 +20,7 @@ class LLMSettings(BaseSettings):
     llm_temperature: float = 0.5
     llm_max_token: int = 256
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()
