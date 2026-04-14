@@ -67,12 +67,11 @@ MAP_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             (
-                "You are a document analyst. Summarize the following chunk of a document in 2-3 sentences "
-                "and list any key details you find. Return ONLY valid JSON (no markdown, no trailing commas) "
-                "with exactly two keys:\n"
-                '  "partial_summary": string (2-3 sentences)\n'
-                '  "partial_details": array of objects with "label" and "value" keys.\n\n'
-                "MUST be valid JSON. No trailing commas. No code blocks. No explanation."
+                "You are a document analyst. Summarize the following chunk of a document and extract key details. "
+                "Return ONLY valid JSON with exactly two keys: partial_summary (string 2-3 sentences) and "
+                "partial_details (array of objects with label and value keys). "
+                "NO markdown blocks, NO trailing commas, NO code blocks, NO explanation. "
+                "Just raw JSON output."
             ),
         ),
         ("human", "{text}"),
@@ -105,6 +104,10 @@ async def summarize_document(file_path: str) -> SummaryResult:
     if not chunks:
         raise ValueError("Document is empty or could not be parsed.")
 
+    print(f"DEBUG: Loaded {len(chunks)} chunks")
+    for i, chunk in enumerate(chunks[:2]):
+        print(f"DEBUG: Chunk {i} preview: {chunk.page_content[:200]}")
+
     llm = get_chat_model()
     parser = RobustJsonParser()
 
@@ -118,8 +121,11 @@ async def _stuff_summarize(chunks, llm, parser) -> SummaryResult:
     full_text = "\n\n".join(chunk.page_content for chunk in chunks)
     chain = _build_summarize_prompt() | llm | parser
     try:
+        print(f"DEBUG: Stuff - full_text length: {len(full_text)}")
         result = await chain.ainvoke({"text": full_text})
+        print(f"DEBUG: Stuff result: {result}")
     except Exception as e:
+        print(f"DEBUG: Stuff error: {str(e)}")
         raise ValueError(f"Summarization failed (stuff): {str(e)}")
     return _parse_result(result)
 
@@ -127,11 +133,14 @@ async def _stuff_summarize(chunks, llm, parser) -> SummaryResult:
 async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
     map_chain = MAP_PROMPT | llm | parser
     partial_results = []
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
         try:
+            print(f"DEBUG: Map chunk {i}, length: {len(chunk.page_content)}")
             partial = await map_chain.ainvoke({"text": chunk.page_content})
+            print(f"DEBUG: Map chunk {i} result: {partial}")
             partial_results.append(partial)
         except Exception as e:
+            print(f"DEBUG: Map error on chunk {i}: {str(e)}")
             raise ValueError(f"Map phase failed on chunk: {str(e)}")
 
     combined = "\n\n".join(
@@ -140,21 +149,27 @@ async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
         for p in partial_results
     )
 
+    print(f"DEBUG: Combined input length: {len(combined)}")
     reduce_chain = REDUCE_PROMPT | llm | parser
     try:
         result = await reduce_chain.ainvoke({"partial_results": combined})
+        print(f"DEBUG: Reduce result: {result}")
     except Exception as e:
+        print(f"DEBUG: Reduce error: {str(e)}")
         raise ValueError(f"Reduce phase failed: {str(e)}")
     return _parse_result(result)
 
 
 def _parse_result(raw: dict) -> SummaryResult:
+    print(f"DEBUG: _parse_result input: {raw}")
     key_details = [
         KeyDetail(label=d.get("label", ""), value=d.get("value", ""))
         for d in raw.get("key_details", [])
         if d.get("label")
     ]
-    return SummaryResult(
+    result = SummaryResult(
         summary=raw.get("summary", ""),
         key_details=key_details,
     )
+    print(f"DEBUG: _parse_result output - summary length: {len(result.summary)}, details: {len(result.key_details)}")
+    return result
