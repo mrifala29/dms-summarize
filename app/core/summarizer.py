@@ -83,12 +83,13 @@ REDUCE_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             (
-                "You are a senior document analyst specializing in HR and legal documents. "
+                "You are a senior document analyst specializing in corporate legal documents. "
                 "You are given partial summaries and key details extracted from chunks of a single document. "
-                "Combine them into a final JSON object with exactly two keys:\n"
-                '  "summary": a concise paragraph (3-5 sentences) describing what the document is about.\n'
-                '  "key_details": a deduplicated list of objects with "label" and "value" keys.\n\n'
+                "Combine them into a final JSON object with exactly two keys: "
+                "summary (a concise paragraph of 3-5 sentences describing the document) and "
+                "key_details (a deduplicated list of objects with label and value keys). "
                 "Merge duplicates, keep the most complete value, and ensure the output is coherent. "
+                "Respond in the same language as the source material. "
                 "Return ONLY valid JSON, no markdown, no code blocks, no trailing commas, no explanation."
             ),
         ),
@@ -104,10 +105,6 @@ async def summarize_document(file_path: str) -> SummaryResult:
     if not chunks:
         raise ValueError("Document is empty or could not be parsed.")
 
-    print(f"DEBUG: Loaded {len(chunks)} chunks")
-    for i, chunk in enumerate(chunks[:2]):
-        print(f"DEBUG: Chunk {i} preview: {chunk.page_content[:200]}")
-
     llm = get_chat_model()
     parser = RobustJsonParser()
 
@@ -121,11 +118,8 @@ async def _stuff_summarize(chunks, llm, parser) -> SummaryResult:
     full_text = "\n\n".join(chunk.page_content for chunk in chunks)
     chain = _build_summarize_prompt() | llm | parser
     try:
-        print(f"DEBUG: Stuff - full_text length: {len(full_text)}")
         result = await chain.ainvoke({"text": full_text})
-        print(f"DEBUG: Stuff result: {result}")
     except Exception as e:
-        print(f"DEBUG: Stuff error: {str(e)}")
         raise ValueError(f"Summarization failed (stuff): {str(e)}")
     return _parse_result(result)
 
@@ -135,13 +129,10 @@ async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
     partial_results = []
     for i, chunk in enumerate(chunks):
         try:
-            print(f"DEBUG: Map chunk {i}, length: {len(chunk.page_content)}")
             partial = await map_chain.ainvoke({"text": chunk.page_content})
-            print(f"DEBUG: Map chunk {i} result: {partial}")
             partial_results.append(partial)
         except Exception as e:
-            print(f"DEBUG: Map error on chunk {i}: {str(e)}")
-            raise ValueError(f"Map phase failed on chunk: {str(e)}")
+            raise ValueError(f"Map phase failed on chunk {i}: {str(e)}")
 
     combined = "\n\n".join(
         f"Partial summary: {p.get('partial_summary', '')}\n"
@@ -149,27 +140,21 @@ async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
         for p in partial_results
     )
 
-    print(f"DEBUG: Combined input length: {len(combined)}")
     reduce_chain = REDUCE_PROMPT | llm | parser
     try:
         result = await reduce_chain.ainvoke({"partial_results": combined})
-        print(f"DEBUG: Reduce result: {result}")
     except Exception as e:
-        print(f"DEBUG: Reduce error: {str(e)}")
         raise ValueError(f"Reduce phase failed: {str(e)}")
     return _parse_result(result)
 
 
 def _parse_result(raw: dict) -> SummaryResult:
-    print(f"DEBUG: _parse_result input: {raw}")
     key_details = [
         KeyDetail(label=d.get("label", ""), value=d.get("value", ""))
         for d in raw.get("key_details", [])
         if d.get("label")
     ]
-    result = SummaryResult(
+    return SummaryResult(
         summary=raw.get("summary", ""),
         key_details=key_details,
     )
-    print(f"DEBUG: _parse_result output - summary length: {len(result.summary)}, details: {len(result.key_details)}")
-    return result

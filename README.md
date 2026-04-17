@@ -1,6 +1,8 @@
 # DMS Summarize
 
-AI-powered document summarization for DMS App — extracts **Summary** and **Key Details** from employee contracts and other HR documents (PDF / DOCX).
+AI-powered document summarization for DMS App — extracts **Summary** and **Key Details** from corporate legal documents (PDF / DOCX).
+
+Supported document types include: contracts, agreements, MoU, NDA, power of attorney, company regulations, board resolutions, lease agreements, SLA, procurement contracts, employment contracts (PKWT/PKWTT), addendums, and other corporate legal instruments.
 
 ## Structure
 
@@ -83,15 +85,15 @@ Upload a PDF or DOCX file → returns summary + key details.
 ```json
 {
   "status": "success",
-  "filename": "contract.pdf",
+  "filename": "nda-agreement.pdf",
   "result": {
-    "summary": "This is a fixed-term employee contract between ...",
+    "summary": "This is a Non-Disclosure Agreement between PT ABC and PT XYZ ...",
     "key_details": [
-      {"label": "Employee Name", "value": "John Doe"},
-      {"label": "Position", "value": "Software Engineer"},
-      {"label": "Contract Type", "value": "Fixed-term"},
-      {"label": "Start Date", "value": "2026-01-01"},
-      {"label": "End Date", "value": "2027-01-01"}
+      {"label": "Document Type", "value": "Non-Disclosure Agreement (NDA)"},
+      {"label": "Parties", "value": "PT ABC and PT XYZ"},
+      {"label": "Effective Date", "value": "2026-01-01"},
+      {"label": "Confidentiality Period", "value": "3 years"},
+      {"label": "Governing Law", "value": "Republic of Indonesia"}
     ]
   }
 }
@@ -102,8 +104,17 @@ Upload a PDF or DOCX file → returns summary + key details.
 1. **Upload** — file saved temporarily, validated (PDF/DOCX only).
 2. **Load & Chunk** — `PyPDFLoader` / `Docx2txtLoader` + `RecursiveCharacterTextSplitter`.
 3. **Summarize** — if document is small (≤3 chunks), uses **stuff** strategy (single LLM call). For larger documents, uses **map-reduce** (chunk → partial summary → combine).
-4. **Structured output** — LLM returns JSON with `summary` and `key_details`.
+4. **Structured output** — LLM returns JSON with `summary` and `key_details`, adapted to the document type.
 5. **Cleanup** — temp file deleted after processing.
+
+## Supported Document Types
+
+| Category | Examples |
+|---|---|
+| Contracts | Employment (PKWT/PKWTT), procurement, service agreements |
+| Agreements | MoU, NDA, lease, partnership |
+| Corporate | Board resolutions, articles of association, company regulations |
+| Legal instruments | Power of attorney, addendums, amendments |
 
 ## MCP (Optional)
 

@@ -7,17 +7,17 @@ from app.schemas.summarize import SummaryResult, KeyDetail
 
 def test_parse_result_valid():
     raw = {
-        "summary": "This is a contract.",
+        "summary": "This is a non-disclosure agreement between PT ABC and PT XYZ.",
         "key_details": [
-            {"label": "Employee", "value": "John"},
-            {"label": "Position", "value": "Engineer"},
+            {"label": "Document Type", "value": "Non-Disclosure Agreement"},
+            {"label": "Parties", "value": "PT ABC and PT XYZ"},
         ],
     }
     result = _parse_result(raw)
     assert isinstance(result, SummaryResult)
-    assert result.summary == "This is a contract."
+    assert "non-disclosure" in result.summary.lower()
     assert len(result.key_details) == 2
-    assert result.key_details[0].label == "Employee"
+    assert result.key_details[0].label == "Document Type"
 
 
 def test_parse_result_empty():
