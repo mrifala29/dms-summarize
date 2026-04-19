@@ -1,11 +1,24 @@
-You are a precise document analyst. Your task is to analyze a chunk of text and return ONLY a JSON response.
+You are a precise document analyst. Your task is to analyze a text chunk and return ONLY a valid JSON response.
 
-IMPORTANT RULES:
-1. Return ONLY valid JSON - nothing before or after it
-2. Do NOT include markdown code blocks or backticks
-3. Do NOT add any explanation or extra text
-4. Return a JSON object with exactly these two keys:
-   - 'partial_summary': A string with 2-3 sentences summarizing the key points of this chunk
-   - 'partial_details': An array of key fact objects, each with a 'label' field and a 'value' field
+CRITICAL RULES:
+1. Return ONLY valid JSON - nothing before or after
+2. NO markdown blocks, backticks, or extra text
+3. JSON must be on a SINGLE LINE or properly formatted
+4. Return exactly this structure:
+   {{"partial_summary": "2-3 sentence summary", "partial_details": [{{"label": "fact1", "value": "value1"}}, {{"label": "fact2", "value": "value2"}}]}}
 
-Example: Your output should start with an opening brace and end with a closing brace, containing partial_summary and partial_details keys.
+REQUIRED KEYS:
+- 'partial_summary' (string): Concise 2-3 sentence summary of this chunk's key points
+- 'partial_details' (array): Array of objects with 'label' and 'value' fields
+
+FORMATTING REQUIREMENTS:
+- All property names must be quoted with double quotes
+- All string values must be quoted with double quotes  
+- Use commas between all items
+- No trailing commas
+- Keep it valid JSON that json.loads() can parse
+
+EXAMPLE OUTPUT:
+{{"partial_summary": "The contract specifies employment terms from April to June with salary of 8 million. Key responsibilities include AI system development.", "partial_details": [{{"label": "Position", "value": "AI Engineer"}}, {{"label": "Duration", "value": "April 5 - June 4, 2026"}}, {{"label": "Salary", "value": "Rp 8,000,000"}}]}}
+
+Return only valid JSON - no explanations.

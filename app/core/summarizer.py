@@ -13,88 +13,132 @@ from app.schemas.summarize import SummaryResult, KeyDetail
 logger = logging.getLogger(__name__)
 
 
+def _force_close_json(text: str) -> str:
+    """Force-close an incomplete JSON by tracking unclosed brackets/braces."""
+    in_string = False
+    escape_next = False
+    stack = []
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in '{[':
+            stack.append(ch)
+        elif ch == '}' and stack and stack[-1] == '{':
+            stack.pop()
+        elif ch == ']' and stack and stack[-1] == '[':
+            stack.pop()
+
+    # Remove trailing comma before closing
+    text = re.sub(r',\s*$', '', text.rstrip())
+
+    # Close all unclosed brackets in reverse order
+    for ch in reversed(stack):
+        text += ']' if ch == '[' else '}'
+
+    return text
+
+
 def _repair_json(text: str) -> str:
-    """Extract and repair JSON from LLM output (handles markdown blocks, trailing commas, extra text)."""
-    # Handle cases where response is list-like
+    """Extract and repair JSON from LLM output."""
     if isinstance(text, list):
-        if len(text) > 0 and isinstance(text[0], dict) and 'text' in text[0]:
-            text = text[0]['text']
-        else:
-            text = str(text)
-    
+        text = text[0].get('text', str(text[0])) if text and isinstance(text[0], dict) else str(text)
+
     text = str(text).strip()
-    
-    # Remove markdown code blocks (```json ... ``` or ``` ... ```)
+
+    # Remove markdown code blocks
     text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)
     text = text.strip()
-    
-    # Find first { and extract until balanced }
+
+    # Find opening brace
     start_idx = text.find('{')
     if start_idx == -1:
-        raise ValueError(f"No JSON object found in response")
-    
-    # Extract from { to balanced }
+        raise ValueError("No JSON object found in response")
+
+    text = text[start_idx:]
+
+    # Try to find balanced end (properly handles strings with braces)
     brace_count = 0
     end_idx = -1
-    for i in range(start_idx, len(text)):
-        if text[i] == '{':
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
             brace_count += 1
-        elif text[i] == '}':
+        elif ch == '}':
             brace_count -= 1
             if brace_count == 0:
                 end_idx = i + 1
                 break
-    
+
     if end_idx == -1:
-        raise ValueError("Unbalanced JSON braces in response")
-    
-    json_str = text[start_idx:end_idx]
-    
-    # Repair trailing commas
-    json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
-    
-    return json_str.strip()
+        logger.warning("JSON not balanced — attempting force-close")
+        text = _force_close_json(text)
+    else:
+        text = text[:end_idx]
+
+    # Fix trailing commas
+    text = re.sub(r',\s*([\]}])', r'\1', text)
+
+    return text.strip()
 
 
 class RobustJsonParser(BaseOutputParser):
-    """Json parser that repairs common issues like trailing commas."""
+    """JSON parser that repairs common LLM output issues."""
 
     def parse(self, text: str) -> dict:
+        if not isinstance(text, str):
+            text = str(text)
+
         try:
-            text = _repair_json(text)
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse JSON after repair: {str(e)}")
+            repaired = _repair_json(text)
+            result = json.loads(repaired)
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected JSON object, got {type(result).__name__}")
+            return result
+        except Exception as e:
+            logger.error(f"JSON parse failed. Error: {e}. Raw (first 300 chars): {text[:300]}")
+            raise ValueError(f"Failed to parse JSON: {e}")
 
 
 def _build_summarize_prompt() -> ChatPromptTemplate:
-    """Build prompt for STUFF phase (document with ≤3 chunks)."""
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", load_final_prompt()),
-            ("human", "Analyze this document:\n\n{text}"),
-        ]
-    )
+    return ChatPromptTemplate.from_messages([
+        ("system", load_final_prompt()),
+        ("human", "Analyze this document:\n\n{text}"),
+    ])
 
 
 def _build_map_prompt() -> ChatPromptTemplate:
-    """Build prompt for MAP phase (chunk-by-chunk analysis in map-reduce)."""
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", load_map_prompt()),
-            ("human", "{text}"),
-        ]
-    )
+    return ChatPromptTemplate.from_messages([
+        ("system", load_map_prompt()),
+        ("human", "{text}"),
+    ])
 
 
 def _build_reduce_prompt() -> ChatPromptTemplate:
-    """Build prompt for REDUCE phase (combining partial results in map-reduce)."""
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", load_final_prompt()),
-            ("human", "Partial results:\n\n{partial_results}"),
-        ]
-    )
+    return ChatPromptTemplate.from_messages([
+        ("system", load_final_prompt()),
+        ("human", "Partial results:\n\n{partial_results}"),
+    ])
 
 
 STUFF_THRESHOLD = 3
@@ -120,19 +164,27 @@ async def _stuff_summarize(chunks, llm, parser) -> SummaryResult:
     try:
         result = await chain.ainvoke({"text": full_text})
     except Exception as e:
-        raise ValueError(f"Summarization failed (stuff): {str(e)}")
+        raise ValueError(f"Summarization failed: {e}")
     return _parse_result(result)
 
 
 async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
     map_chain = _build_map_prompt() | llm | parser
     partial_results = []
+
     for i, chunk in enumerate(chunks):
         try:
             partial = await map_chain.ainvoke({"text": chunk.page_content})
+            if not isinstance(partial, dict):
+                partial = {"partial_summary": str(partial), "partial_details": []}
             partial_results.append(partial)
         except Exception as e:
-            raise ValueError(f"Map phase failed on chunk {i}: {str(e)}")
+            # Skip bad chunk — don't fail the whole document
+            logger.warning(f"Skipping chunk {i} due to parse error: {e}")
+            partial_results.append({
+                "partial_summary": f"[Chunk {i} could not be parsed]",
+                "partial_details": []
+            })
 
     combined = "\n\n".join(
         f"Partial summary: {p.get('partial_summary', '')}\n"
@@ -143,16 +195,27 @@ async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
     reduce_chain = _build_reduce_prompt() | llm | parser
     try:
         result = await reduce_chain.ainvoke({"partial_results": combined})
+        if not isinstance(result, dict):
+            raise ValueError(f"Reduce phase returned invalid type: {type(result).__name__}")
     except Exception as e:
-        raise ValueError(f"Reduce phase failed: {str(e)}")
+        raise ValueError(f"Reduce phase failed: {e}")
+
     return _parse_result(result)
 
 
 def _parse_result(raw: dict) -> SummaryResult:
+    if not isinstance(raw, dict):
+        raise ValueError(f"Expected dict from parser but got {type(raw).__name__}")
+
+    def _to_str(v) -> str:
+        if isinstance(v, list):
+            return ", ".join(str(i) for i in v)
+        return str(v) if v is not None else ""
+
     key_details = [
-        KeyDetail(label=d.get("label", ""), value=d.get("value", ""))
+        KeyDetail(label=d.get("label", ""), value=_to_str(d.get("value", "")))
         for d in raw.get("key_details", [])
-        if d.get("label")
+        if isinstance(d, dict) and d.get("label")
     ]
     return SummaryResult(
         summary=raw.get("summary", ""),
