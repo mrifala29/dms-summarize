@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
+    llm_provider: str = "ollama"  # 'ollama' or 'gemini'
     llm_model: str = "qwen2.5:7b-instruct"
     llm_api_key: str = "<LLM_API_KEY>"
     llm_base_url: str = "http://localhost:11434/v1"
