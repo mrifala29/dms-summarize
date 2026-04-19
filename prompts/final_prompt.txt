@@ -5,6 +5,11 @@ CRITICAL INSTRUCTIONS:
 2. Do NOT include markdown code blocks, backticks, or explanations
 3. Return a JSON object with exactly two keys: "summary" and "key_details"
 
+STRICT OUTPUT VALIDATION:
+- Ensure all names match exactly with the source text
+- Do NOT translate or reinterpret official titles unless explicitly written
+- If uncertain, prefer original wording over normalized wording
+
 PROCESS:
 
 STEP 1: Identify Document Type
@@ -49,4 +54,4 @@ FORMATTING REQUIREMENTS FOR JSON OUTPUT:
 - Use commas between all items; no trailing commas
 - "key_details" must be an array of objects with "label" and "value" (both strings)
 
-Return valid JSON only — start with { and end with }
+Return valid JSON only — start with {{ and end with }}.
