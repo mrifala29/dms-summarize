@@ -1,18 +1,28 @@
 import json
 import re
+import logging
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import BaseOutputParser
 
 from app.core.models import get_chat_model
 from app.core.document_loader import load_and_split
-from app.core.prompts import load_system_prompt
+from app.core.prompts import load_final_prompt, load_map_prompt
 from app.schemas.summarize import SummaryResult, KeyDetail
+
+logger = logging.getLogger(__name__)
 
 
 def _repair_json(text: str) -> str:
     """Extract and repair JSON from LLM output (handles markdown blocks, trailing commas, extra text)."""
-    text = text.strip()
+    # Handle cases where response is list-like
+    if isinstance(text, list):
+        if len(text) > 0 and isinstance(text[0], dict) and 'text' in text[0]:
+            text = text[0]['text']
+        else:
+            text = str(text)
+    
+    text = str(text).strip()
     
     # Remove markdown code blocks (```json ... ``` or ``` ... ```)
     text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)
@@ -21,7 +31,7 @@ def _repair_json(text: str) -> str:
     # Find first { and extract until balanced }
     start_idx = text.find('{')
     if start_idx == -1:
-        raise ValueError("No JSON object found in response")
+        raise ValueError(f"No JSON object found in response")
     
     # Extract from { to balanced }
     brace_count = 0
@@ -36,7 +46,7 @@ def _repair_json(text: str) -> str:
                 break
     
     if end_idx == -1:
-        raise ValueError("Unbalanced JSON braces")
+        raise ValueError("Unbalanced JSON braces in response")
     
     json_str = text[start_idx:end_idx]
     
@@ -50,52 +60,42 @@ class RobustJsonParser(BaseOutputParser):
     """Json parser that repairs common issues like trailing commas."""
 
     def parse(self, text: str) -> dict:
-        text = _repair_json(text)
-        return json.loads(text)
+        try:
+            text = _repair_json(text)
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse JSON after repair: {str(e)}")
 
 
 def _build_summarize_prompt() -> ChatPromptTemplate:
+    """Build prompt for STUFF phase (document with ≤3 chunks)."""
     return ChatPromptTemplate.from_messages(
         [
-            ("system", load_system_prompt()),
+            ("system", load_final_prompt()),
             ("human", "Analyze this document:\n\n{text}"),
         ]
     )
 
-MAP_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            (
-                "You are a document analyst. Summarize the following chunk of a document and extract key details. "
-                "Return ONLY valid JSON with exactly two keys: partial_summary (string 2-3 sentences) and "
-                "partial_details (array of objects with label and value keys). "
-                "NO markdown blocks, NO trailing commas, NO code blocks, NO explanation. "
-                "Just raw JSON output."
-            ),
-        ),
-        ("human", "{text}"),
-    ]
-)
 
-REDUCE_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            (
-                "You are a senior document analyst specializing in corporate legal documents. "
-                "You are given partial summaries and key details extracted from chunks of a single document. "
-                "Combine them into a final JSON object with exactly two keys: "
-                "summary (a concise paragraph of 3-5 sentences describing the document) and "
-                "key_details (a deduplicated list of objects with label and value keys). "
-                "Merge duplicates, keep the most complete value, and ensure the output is coherent. "
-                "Respond in the same language as the source material. "
-                "Return ONLY valid JSON, no markdown, no code blocks, no trailing commas, no explanation."
-            ),
-        ),
-        ("human", "Partial results:\n\n{partial_results}"),
-    ]
-)
+def _build_map_prompt() -> ChatPromptTemplate:
+    """Build prompt for MAP phase (chunk-by-chunk analysis in map-reduce)."""
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", load_map_prompt()),
+            ("human", "{text}"),
+        ]
+    )
+
+
+def _build_reduce_prompt() -> ChatPromptTemplate:
+    """Build prompt for REDUCE phase (combining partial results in map-reduce)."""
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", load_final_prompt()),
+            ("human", "Partial results:\n\n{partial_results}"),
+        ]
+    )
+
 
 STUFF_THRESHOLD = 3
 
@@ -125,7 +125,7 @@ async def _stuff_summarize(chunks, llm, parser) -> SummaryResult:
 
 
 async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
-    map_chain = MAP_PROMPT | llm | parser
+    map_chain = _build_map_prompt() | llm | parser
     partial_results = []
     for i, chunk in enumerate(chunks):
         try:
@@ -140,7 +140,7 @@ async def _map_reduce_summarize(chunks, llm, parser) -> SummaryResult:
         for p in partial_results
     )
 
-    reduce_chain = REDUCE_PROMPT | llm | parser
+    reduce_chain = _build_reduce_prompt() | llm | parser
     try:
         result = await reduce_chain.ainvoke({"partial_results": combined})
     except Exception as e:
