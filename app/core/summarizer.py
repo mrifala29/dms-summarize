@@ -2,6 +2,7 @@ import json
 import re
 import logging
 
+from json_repair import repair_json
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import BaseOutputParser
 
@@ -13,42 +14,8 @@ from app.schemas.summarize import SummaryResult, KeyDetail
 logger = logging.getLogger(__name__)
 
 
-def _force_close_json(text: str) -> str:
-    """Force-close an incomplete JSON by tracking unclosed brackets/braces."""
-    in_string = False
-    escape_next = False
-    stack = []
-    for ch in text:
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch in '{[':
-            stack.append(ch)
-        elif ch == '}' and stack and stack[-1] == '{':
-            stack.pop()
-        elif ch == ']' and stack and stack[-1] == '[':
-            stack.pop()
-
-    # Remove trailing comma before closing
-    text = re.sub(r',\s*$', '', text.rstrip())
-
-    # Close all unclosed brackets in reverse order
-    for ch in reversed(stack):
-        text += ']' if ch == '[' else '}'
-
-    return text
-
-
-def _repair_json(text: str) -> str:
-    """Extract and repair JSON from LLM output."""
+def _extract_and_repair(text: str) -> dict:
+    """Extract JSON from LLM output and repair any issues using json-repair."""
     if isinstance(text, list):
         text = text[0].get('text', str(text[0])) if text and isinstance(text[0], dict) else str(text)
 
@@ -58,48 +25,20 @@ def _repair_json(text: str) -> str:
     text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)
     text = text.strip()
 
-    # Find opening brace
+    # Find the start of the JSON object
     start_idx = text.find('{')
     if start_idx == -1:
         raise ValueError("No JSON object found in response")
-
     text = text[start_idx:]
 
-    # Try to find balanced end (properly handles strings with braces)
-    brace_count = 0
-    end_idx = -1
-    in_string = False
-    escape_next = False
-    for i, ch in enumerate(text):
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == '{':
-            brace_count += 1
-        elif ch == '}':
-            brace_count -= 1
-            if brace_count == 0:
-                end_idx = i + 1
-                break
+    # Use json-repair to fix all common issues (unquoted keys, trailing commas,
+    # missing quotes, truncated JSON, unbalanced braces, etc.)
+    repaired = repair_json(text, return_objects=True)
 
-    if end_idx == -1:
-        logger.warning("JSON not balanced — attempting force-close")
-        text = _force_close_json(text)
-    else:
-        text = text[:end_idx]
+    if not isinstance(repaired, dict):
+        raise ValueError(f"Repaired JSON is {type(repaired).__name__}, expected dict")
 
-    # Fix trailing commas
-    text = re.sub(r',\s*([\]}])', r'\1', text)
-
-    return text.strip()
+    return repaired
 
 
 class RobustJsonParser(BaseOutputParser):
@@ -108,13 +47,8 @@ class RobustJsonParser(BaseOutputParser):
     def parse(self, text: str) -> dict:
         if not isinstance(text, str):
             text = str(text)
-
         try:
-            repaired = _repair_json(text)
-            result = json.loads(repaired)
-            if not isinstance(result, dict):
-                raise ValueError(f"Expected JSON object, got {type(result).__name__}")
-            return result
+            return _extract_and_repair(text)
         except Exception as e:
             logger.error(f"JSON parse failed. Error: {e}. Raw (first 300 chars): {text[:300]}")
             raise ValueError(f"Failed to parse JSON: {e}")

@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     app_log_level: str = "info"
 
     upload_dir: str = "./uploads"
-    max_chunk_size: int = 4000
-    chunk_overlap: int = 200
+    max_chunk_size: int = 2000
+    chunk_overlap: int = 100
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
