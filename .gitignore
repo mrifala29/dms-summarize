@@ -35,3 +35,7 @@ uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# Prompts
+prompts/final_prompt_v1.json
+prompts/map_prompt_v1.json
