@@ -14,15 +14,10 @@ class Settings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    """LLM Configuration
-    
-    Supported providers:
-    - 'gemini': Google Generative AI
-    - 'openai-compatible': OpenAI-compatible API (DeepSeek, etc.)
-    """
-    llm_provider: str = "gemini"  # 'gemini' or 'openai-compatible'
-    llm_model: str = "gemini-2.0-flash"
-    llm_api_key: str = "<LLM_API_KEY>"
+    """LLM configuration. Supported providers: 'gemini', 'openai-compatible'."""
+    llm_provider: str = "gemini"
+    llm_model: str = ""
+    llm_api_key: str = ""
     llm_base_url: str = ""  # Required for openai-compatible
     llm_temperature: float = 0.5
     llm_max_token: int = 2048
@@ -31,9 +26,8 @@ class LLMSettings(BaseSettings):
 
 
 class OCRSettings(BaseSettings):
-    """OCR Configuration for image-based PDFs"""
-    ocr_provider: str = "easyocr"  # 'easyocr' (free, recommended), 'gemini' (paid), 'tesseract' (free, lower acc)
-    ocr_api_key: str = ""  # Gemini API key for OCR (only needed if ocr_provider=gemini)
+    """OCR configuration. Providers: 'gemini' (VLM, uses LLM_API_KEY), 'easyocr', 'tesseract'."""
+    ocr_provider: str = "gemini"  # 'gemini' recommended; 'easyocr' or 'tesseract' for local
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

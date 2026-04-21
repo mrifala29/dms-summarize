@@ -59,11 +59,22 @@ def build_language_instruction(lang_code: str) -> str:
 
 
 def _extract_and_repair(text: str) -> dict:
-    """Extract JSON from LLM output and repair any issues using json-repair."""
+    """Extract JSON from LLM output and repair any issues using json-repair.
+    
+    Handles:
+    - List responses (convert first element)
+    - Markdown code blocks
+    - Invalid UTF-8 or binary data
+    - Malformed JSON (trailing commas, unquoted keys, etc.)
+    """
     if isinstance(text, list):
         text = text[0].get('text', str(text[0])) if text and isinstance(text[0], dict) else str(text)
 
     text = str(text).strip()
+    
+    # Filter out non-printable characters (handles binary garbage)
+    text = ''.join(c for c in text if c.isprintable() or c in '\n\t\r')
+    text = text.strip()
 
     # Remove markdown code blocks
     text = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', text, flags=re.DOTALL)
@@ -73,10 +84,26 @@ def _extract_and_repair(text: str) -> dict:
     start_idx = text.find('{')
     if start_idx == -1:
         raise ValueError("No JSON object found in response")
-    text = text[start_idx:]
+    
+    # Find the end of the JSON object (last closing brace)
+    text_from_start = text[start_idx:]
+    brace_count = 0
+    end_idx = 0
+    for i, c in enumerate(text_from_start):
+        if c == '{':
+            brace_count += 1
+        elif c == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                end_idx = i + 1
+                break
+    
+    if end_idx == 0:
+        raise ValueError("Incomplete JSON object (unmatched braces)")
+    
+    text = text_from_start[:end_idx]
 
-    # Use json-repair to fix all common issues (unquoted keys, trailing commas,
-    # missing quotes, truncated JSON, unbalanced braces, etc.)
+    # Use json-repair to fix all common issues
     repaired = repair_json(text, return_objects=True)
 
     if not isinstance(repaired, dict):
