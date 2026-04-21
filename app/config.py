@@ -32,7 +32,8 @@ class LLMSettings(BaseSettings):
 
 class OCRSettings(BaseSettings):
     """OCR Configuration for image-based PDFs"""
-    ocr_provider: str = "gemini"  # 'gemini' (recommended) or 'tesseract' (local)
+    ocr_provider: str = "easyocr"  # 'easyocr' (free, recommended), 'gemini' (paid), 'tesseract' (free, lower acc)
+    ocr_api_key: str = ""  # Gemini API key for OCR (only needed if ocr_provider=gemini)
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

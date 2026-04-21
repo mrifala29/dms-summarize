@@ -2,8 +2,9 @@
 OCR abstraction layer supporting multiple providers.
 
 Providers:
-  - gemini: Google Gemini Vision (API-based, recommended for production)
-  - tesseract: Tesseract OCR (local, fallback)
+  - easyocr: EasyOCR (free, local, high accuracy, multilingual) — RECOMMENDED
+  - gemini: Google Gemini Vision (API-based, paid, very high accuracy)
+  - tesseract: Tesseract OCR (free, local, medium accuracy)
 
 Supports image-based PDFs and scanned documents.
 """
@@ -37,20 +38,35 @@ class OCRProvider(ABC):
 
 
 class GeminiVisionOCR(OCRProvider):
-    """Gemini Vision-based OCR provider."""
+    """Gemini Vision-based OCR provider.
+    
+    Uses OCR_API_KEY from .env (dedicated Gemini API key).
+    If OCR_API_KEY is not set, falls back to LLM_API_KEY — only works
+    if LLM_PROVIDER=gemini (Gemini-issued key, not MaiaRouter/DeepSeek).
+    """
     
     def __init__(self):
-        from app.config import llm_settings
+        from app.config import ocr_settings, llm_settings
         
-        api_key = llm_settings.llm_api_key
-        if not api_key or api_key == "<LLM_API_KEY>":
+        # Prefer dedicated OCR key; fallback to main LLM key
+        api_key = ocr_settings.ocr_api_key or llm_settings.llm_api_key
+        
+        if not api_key or api_key in ("<LLM_API_KEY>", ""):
             raise ValueError(
-                "LLM_API_KEY not set. Required for Gemini Vision OCR."
+                "No Gemini API key found for OCR. "
+                "Set OCR_API_KEY=<your-gemini-key> in .env. "
+                "Get a key at: https://aistudio.google.com/apikey"
             )
         
-        # Use LangChain's Gemini integration for vision
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        if api_key.startswith("sk-"):
+            raise ValueError(
+                "OCR_API_KEY looks like an OpenAI/MaiaRouter key (starts with 'sk-'). "
+                "Gemini Vision requires a Google AI API key (starts with 'AIza...'). "
+                "Set OCR_API_KEY=<your-gemini-key> in .env. "
+                "Get a key at: https://aistudio.google.com/apikey"
+            )
         
+        from langchain_google_genai import ChatGoogleGenerativeAI
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.0-flash",
             api_key=api_key,
@@ -111,6 +127,70 @@ class GeminiVisionOCR(OCRProvider):
             raise
 
 
+class EasyOCR(OCRProvider):
+    """EasyOCR-based provider — free, multilingual, high accuracy.
+    
+    Excellent for Thai, Indonesian, Vietnamese, English, and 80+ other languages.
+    Runs locally, no API quota limits. First use downloads model (~500MB).
+    """
+    
+    def __init__(self, languages: list = None):
+        """
+        Initialize EasyOCR reader.
+        
+        Args:
+            languages: List of language codes (e.g., ['th', 'en']).
+                      If None, detects from document. Default: ['en']
+        """
+        try:
+            import easyocr
+            self.reader = easyocr.Reader(
+                languages or ['en'],
+                gpu=False,  # Use CPU; set True if CUDA available
+            )
+        except ImportError:
+            raise ImportError(
+                "easyocr not installed. Install with: pip install easyocr"
+            )
+        logger.info(f"Initialized EasyOCR for languages: {languages or ['en']}")
+    
+    async def extract_text_from_image(self, image_input) -> str:
+        """
+        Use EasyOCR to extract text from image.
+        
+        Args:
+            image_input: PIL Image object
+            
+        Returns:
+            Extracted text
+        """
+        try:
+            if isinstance(image_input, str):
+                # Base64 to PIL
+                img_bytes = base64.b64decode(image_input)
+                image_input = Image.open(io.BytesIO(img_bytes))
+            
+            if not isinstance(image_input, Image.Image):
+                raise ValueError(f"Expected PIL Image, got {type(image_input)}")
+            
+            logger.debug(f"EasyOCR processing image {image_input.size}")
+            
+            # EasyOCR expects numpy array
+            import numpy as np
+            img_array = np.array(image_input)
+            
+            results = self.reader.readtext(img_array)
+            
+            # Combine all detected text
+            text = "\n".join([result[1] for result in results])
+            logger.debug(f"EasyOCR extracted {len(text)} characters")
+            return text.strip()
+            
+        except Exception as e:
+            logger.error(f"EasyOCR failed: {type(e).__name__}: {str(e)}")
+            raise
+
+
 class TesseractOCR(OCRProvider):
     """Tesseract-based OCR provider (local fallback)."""
     
@@ -153,7 +233,8 @@ def get_ocr_provider(provider_name: str = None) -> OCRProvider:
     Factory function to get OCR provider.
     
     Args:
-        provider_name: 'gemini' (default), 'tesseract', or None to use config
+        provider_name: 'easyocr' (free, recommended), 'gemini' (paid), 'tesseract' (free, lower acc)
+                      or None to use config
         
     Returns:
         OCRProvider instance
@@ -166,14 +247,16 @@ def get_ocr_provider(provider_name: str = None) -> OCRProvider:
     
     provider_name = provider_name.lower()
     
-    if provider_name == "gemini":
+    if provider_name == "easyocr":
+        return EasyOCR(languages=['th', 'en', 'id', 'vi'])  # Thai, English, Indonesian, Vietnamese
+    elif provider_name == "gemini":
         return GeminiVisionOCR()
     elif provider_name == "tesseract":
         return TesseractOCR()
     else:
         raise ValueError(
             f"Unsupported OCR provider: {provider_name}. "
-            f"Supported: 'gemini', 'tesseract'"
+            f"Supported: 'easyocr' (recommended), 'gemini', 'tesseract'"
         )
 
 
