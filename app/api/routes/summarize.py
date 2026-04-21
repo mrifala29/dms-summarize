@@ -2,8 +2,8 @@ import os
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
-from app.core.document_loader import save_upload, ALLOWED_EXTENSIONS
-from app.core.summarizer import summarize_document
+from app.document import save_upload, ALLOWED_EXTENSIONS
+from app.summarization import summarize_document
 from app.schemas.summarize import SummarizeResponse
 
 router = APIRouter(prefix="/api/v1", tags=["summarize"])

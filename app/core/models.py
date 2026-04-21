@@ -10,8 +10,8 @@ def get_chat_model() -> Union[ChatOpenAI, ChatGoogleGenerativeAI]:
     Factory function to get the appropriate LLM client based on provider config.
     
     Supports:
-    - 'ollama': OpenAI-compatible local or remote endpoint
     - 'gemini': Google Generative AI (Gemini)
+    - 'openai-compatible': OpenAI-compatible API (DeepSeek, local LLMs, etc.)
     """
     provider = llm_settings.llm_provider.lower()
     
@@ -22,10 +22,15 @@ def get_chat_model() -> Union[ChatOpenAI, ChatGoogleGenerativeAI]:
             temperature=llm_settings.llm_temperature,
             max_output_tokens=llm_settings.llm_max_token,
         )
-    elif provider == "ollama":
+    elif provider == "openai-compatible":
+        if not llm_settings.llm_base_url:
+            raise ValueError(
+                "llm_base_url is required for openai-compatible provider. "
+                "Set LLM_BASE_URL in .env"
+            )
         return ChatOpenAI(
             model=llm_settings.llm_model,
-            api_key=llm_settings.llm_api_key or "dummy",  # Ollama doesn't require API key
+            api_key=llm_settings.llm_api_key,
             base_url=llm_settings.llm_base_url,
             temperature=llm_settings.llm_temperature,
             max_tokens=llm_settings.llm_max_token,
@@ -33,5 +38,5 @@ def get_chat_model() -> Union[ChatOpenAI, ChatGoogleGenerativeAI]:
     else:
         raise ValueError(
             f"Unsupported LLM provider: {provider}. "
-            f"Supported providers: 'ollama', 'gemini'"
+            f"Supported providers: 'gemini', 'openai-compatible'"
         )

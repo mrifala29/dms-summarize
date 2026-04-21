@@ -14,15 +14,29 @@ class Settings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    llm_provider: str = "ollama"  # 'ollama' or 'gemini'
-    llm_model: str = "qwen2.5:7b-instruct"
+    """LLM Configuration
+    
+    Supported providers:
+    - 'gemini': Google Generative AI
+    - 'openai-compatible': OpenAI-compatible API (DeepSeek, etc.)
+    """
+    llm_provider: str = "gemini"  # 'gemini' or 'openai-compatible'
+    llm_model: str = "gemini-2.0-flash"
     llm_api_key: str = "<LLM_API_KEY>"
-    llm_base_url: str = "http://localhost:11434/v1"
+    llm_base_url: str = ""  # Required for openai-compatible
     llm_temperature: float = 0.5
-    llm_max_token: int = 256
+    llm_max_token: int = 2048
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+
+class OCRSettings(BaseSettings):
+    """OCR Configuration for image-based PDFs"""
+    ocr_provider: str = "gemini"  # 'gemini' (recommended) or 'tesseract' (local)
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()
 llm_settings = LLMSettings()
+ocr_settings = OCRSettings()
